@@ -12,7 +12,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"strings"
 
 	"github.com/google/uuid"
 
@@ -24,13 +23,13 @@ import (
 // 定义一些常量
 const (
 	configFile  = "config.json"
-	uploadDir   = "upload" // 上传文件的目录
-	avatarDir   = "avatar" // 头像文件的目录
-	answerDir   = "answer" // 答案文件的目录
-	testDir     = "test"   // 测试文件的目录
-	maxFileSize = 10 << 20 // 上传文件的最大大小（10MB）
-	pngExt      = ".png"   // png文件的扩展名
-	txtExt      = ".txt"   // txt文件的扩展名
+	uploadDir   = "files/upload" // 上传文件的目录
+	avatarDir   = "files/avatar" // 头像文件的目录
+	answerDir   = "files/answer" // 答案文件的目录
+	testDir     = "files/test"   // 测试文件的目录
+	maxFileSize = 10 << 20       // 上传文件的最大大小（10MB）
+	pngExt      = ".png"         // png文件的扩展名
+	txtExt      = ".txt"         // txt文件的扩展名
 )
 
 // 定义一个结构体，用于返回上传文件的uuid
@@ -103,7 +102,7 @@ var SetFileResponseFunc = func(w *http.ResponseWriter, success bool, msg string)
 	json.NewEncoder((*w)).Encode(&response)
 }
 
-// 定义一个函数，用于将file_uuid指定的文件尝试转换为png（是转换而非单纯的改后缀）然后放在对应的avatar文件夹
+// 定义一个函数，用于将file_uuid指定的文件尝试转换为png,然后放在对应的avatar文件夹
 func setAvatarHandler(w http.ResponseWriter, r *http.Request) {
 	// 检查请求方法是否为POST
 	if r.Method != http.MethodPost {
@@ -151,8 +150,38 @@ func setAvatarHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	err = os.Remove(oldFile)
+	if err != nil {
+		SetFileResponseFunc(&w, false, err.Error())
+		return
+	}
+
 	// 返回成功的消息给客户端
 	SetFileResponseFunc(&w, true, "")
+}
+
+func MoveFile(sourcePath, destPath string) error {
+	inputFile, err := os.Open(sourcePath)
+	if err != nil {
+		return fmt.Errorf("couldn't open source file: %s", err)
+	}
+	outputFile, err := os.Create(destPath)
+	if err != nil {
+		inputFile.Close()
+		return fmt.Errorf("couldn't open dest file: %s", err)
+	}
+	defer outputFile.Close()
+	_, err = io.Copy(outputFile, inputFile)
+	inputFile.Close()
+	if err != nil {
+		return fmt.Errorf("writing to output file failed: %s", err)
+	}
+	// The copy was successful, so now delete the original file
+	err = os.Remove(sourcePath)
+	if err != nil {
+		return fmt.Errorf("fail removing original file: %s", err)
+	}
+	return nil
 }
 
 // 定义一个函数，用于将file_uuid指定的文件改成txt后缀放在answer或test文件夹中
@@ -189,26 +218,20 @@ func setFileHandler(dir string) http.HandlerFunc {
 			return
 		}
 		oldFile := files[0]
-		oldExt := filepath.Ext(oldFile)
-		newName := strings.Replace(oldFile, oldExt, txtExt, 1) // 替换旧文件的扩展名为txt
-		newFile := filepath.Join(dir, fileName)                // 新文件的路径
-		err = os.Rename(oldFile, newName)                      // 重命名旧文件为新文件名（不改变内容）
-		if err != nil {
-			SetFileResponseFunc(&w, false, err.Error())
-			return
-		}
-		// 创建目标目录（如果不存在）
+		newFile := filepath.Join(dir, fileName) // 新文件的路径
+
 		err = os.MkdirAll(dir, os.ModePerm)
 		if err != nil {
 			SetFileResponseFunc(&w, false, err.Error())
 			return
 		}
-		// 移动新文件到目标目录中
-		err = os.Rename(newName, newFile)
+
+		err = MoveFile(oldFile, newFile)
 		if err != nil {
 			SetFileResponseFunc(&w, false, err.Error())
 			return
 		}
+
 		// 返回成功的消息给客户端
 		SetFileResponseFunc(&w, true, "")
 	}
@@ -307,6 +330,6 @@ func main() {
 	http.HandleFunc("/test/", downloadFileHandler(testDir))
 	http.HandleFunc("/answer/", downloadFileHandler(answerDir))
 
-	log.Println("Server started on port 8080")
+	log.Printf("Server started on port: %d\n", config.Port)
 	http.ListenAndServe(fmt.Sprintf(":%d", config.Port), nil)
 }
